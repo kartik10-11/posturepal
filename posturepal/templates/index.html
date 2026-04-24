@@ -1,0 +1,1291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Posture Correction System</title>
+
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<!-- MediaPipe Libraries (loaded from CDN - no install needed) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+<style>
+/* ══════════════════════════════════════════
+   RESET & BASE
+══════════════════════════════════════════ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  background: #f1f5f9;
+  color: #1e293b;
+  min-height: 100vh;
+}
+
+/* ══════════════════════════════════════════
+   HEADER
+══════════════════════════════════════════ */
+.header {
+  background: #0f172a;
+  color: white;
+  padding: 0 24px;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.header-left { display: flex; align-items: center; gap: 10px; }
+.header-logo { font-size: 1.5rem; }
+.header-title { font-size: 1rem; font-weight: 700; }
+.header-sub   { font-size: 0.72rem; color: #94a3b8; margin-top: 1px; }
+
+.live-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 20px;
+  padding: 5px 14px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.live-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #475569;
+}
+
+.live-dot.active {
+  background: #4ade80;
+  animation: pulse 1.2s infinite;
+}
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* ══════════════════════════════════════════
+   MAIN LAYOUT
+══════════════════════════════════════════ */
+.main {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 20px 16px 40px;
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 16px;
+}
+
+@media(max-width: 800px) {
+  .main { grid-template-columns: 1fr; }
+}
+
+/* ══════════════════════════════════════════
+   CARD
+══════════════════════════════════════════ */
+.card {
+  background: white;
+  border-radius: 14px;
+  padding: 18px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+
+.card + .card { margin-top: 14px; }
+
+.card-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #94a3b8;
+  margin-bottom: 14px;
+}
+
+/* ══════════════════════════════════════════
+   CAMERA SECTION
+══════════════════════════════════════════ */
+.cam-wrap {
+  position: relative;
+  background: #0f172a;
+  border-radius: 10px;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 4/3;
+}
+
+#videoEl  { position:absolute; width:100%; height:100%; object-fit:cover; opacity:0; }
+#canvasEl { position:absolute; width:100%; height:100%; object-fit:cover; display:block; }
+
+/* Top-left badges on camera */
+.cam-badges {
+  position: absolute;
+  top: 10px; left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cam-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(15,23,42,0.75);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: white;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+/* Top-right status badge on camera */
+.cam-status-badge {
+  position: absolute;
+  top: 10px; right: 10px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  transition: all 0.3s;
+}
+
+.csb-correct { background: rgba(34,197,94,0.9);  color: white; }
+.csb-bad     { background: rgba(234,179,8,0.9);  color: white; }
+.csb-worst   { background: rgba(239,68,68,0.9);  color: white; }
+.csb-idle    { background: rgba(71,85,105,0.9);  color: white; }
+
+/* Start overlay */
+#startOverlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(15,23,42,0.92);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border-radius: 10px;
+}
+
+.start-icon { font-size: 3rem; }
+.start-title { color: white; font-size: 1.1rem; font-weight: 700; }
+.start-sub   { color: #94a3b8; font-size: 0.82rem; }
+
+.btn-start {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 12px 36px;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: background 0.2s, transform 0.1s;
+}
+.btn-start:hover  { background: #2563eb; transform: translateY(-1px); }
+.btn-start:active { transform: translateY(0); }
+
+/* ══════════════════════════════════════════
+   POSTURE STATUS BOX
+══════════════════════════════════════════ */
+.status-box {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  margin-top: 14px;
+  transition: all 0.35s ease;
+  border: 1.5px solid;
+}
+
+.sb-correct { background:#f0fdf4; border-color:#86efac; }
+.sb-bad     { background:#fefce8; border-color:#fde047; }
+.sb-worst   { background:#fff1f2; border-color:#fda4af; }
+.sb-idle    { background:#f8fafc; border-color:#e2e8f0; }
+
+.sb-icon  { font-size: 2.2rem; flex-shrink: 0; }
+.sb-title { font-size: 1.05rem; font-weight: 800; color: #0f172a; }
+.sb-desc  { font-size: 0.8rem; color: #64748b; margin-top: 3px; }
+
+/* ══════════════════════════════════════════
+   ANGLE ANALYSIS GRID
+══════════════════════════════════════════ */
+.angle-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.angle-tile {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.angle-val {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #0f172a;
+  display: block;
+  line-height: 1;
+}
+
+.angle-name {
+  font-size: 0.68rem;
+  color: #94a3b8;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 4px 0 6px;
+}
+
+.angle-track {
+  height: 5px;
+  background: #e2e8f0;
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.angle-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.4s, background 0.4s;
+}
+
+.aok   { background: #4ade80; }
+.awarn { background: #facc15; }
+.abad  { background: #f87171; }
+
+/* ══════════════════════════════════════════
+   SUGGESTIONS
+══════════════════════════════════════════ */
+.sug-list { list-style: none; }
+
+.sug-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.86rem;
+  color: #334155;
+  line-height: 1.4;
+}
+
+.sug-item:last-child { border-bottom: none; }
+.sug-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+
+/* ══════════════════════════════════════════
+   STREAK CARD
+══════════════════════════════════════════ */
+.streak-num  { font-size: 3rem; font-weight: 800; color: #f97316; line-height: 1; text-align: center; }
+.streak-unit { font-size: 0.72rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; text-align: center; margin-bottom: 10px; }
+
+.streak-track {
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 99px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.streak-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4ade80, #22c55e);
+  border-radius: 99px;
+  transition: width 1s linear;
+}
+
+.streak-goal-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  color: #94a3b8;
+  margin-bottom: 10px;
+}
+
+.badges {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.badge {
+  font-size: 0.7rem;
+  padding: 3px 10px;
+  border-radius: 99px;
+  border: 1px solid #e2e8f0;
+  color: #cbd5e1;
+  font-weight: 700;
+  transition: all 0.4s;
+}
+
+.badge.earned { color: #d97706; border-color: #d97706; background: #fffbeb; }
+
+.rest-box {
+  margin-top: 10px;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #1d4ed8;
+  text-align: center;
+  display: none;
+}
+
+/* ══════════════════════════════════════════
+   BREAK TIMER
+══════════════════════════════════════════ */
+.break-center { text-align: center; }
+.break-time   { font-size: 2.2rem; font-weight: 800; color: #3b82f6; font-variant-numeric: tabular-nums; }
+.break-lbl    { font-size: 0.7rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; margin-bottom: 6px; }
+.break-pill {
+  display: inline-block;
+  padding: 4px 14px;
+  border-radius: 99px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.bp-work { background: #eff6ff; color: #3b82f6; }
+.bp-rest { background: #f0fdf4; color: #16a34a; }
+
+/* ══════════════════════════════════════════
+   REPORT CARD
+══════════════════════════════════════════ */
+.grade-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.grade-box {
+  width: 68px; height: 68px;
+  background: #0f172a;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: white;
+  flex-shrink: 0;
+}
+
+.rep-bars { flex: 1; min-width: 160px; }
+
+.rep-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.rep-lbl { font-size: 0.7rem; color: #94a3b8; font-weight: 700; width: 62px; flex-shrink: 0; }
+.rep-track { flex: 1; height: 7px; background: #e2e8f0; border-radius: 99px; overflow: hidden; }
+.rep-fill  { height: 100%; border-radius: 99px; transition: width 0.8s; }
+.fg { background: #4ade80; }
+.fy { background: #facc15; }
+.fr { background: #f87171; }
+.rep-val { font-size: 0.7rem; font-weight: 700; width: 30px; text-align: right; }
+
+.stat-strip {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.stat-chip {
+  flex: 1;
+  min-width: 64px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.stat-chip .sv { font-size: 1.15rem; font-weight: 800; color: #3b82f6; display: block; }
+.stat-chip .sl { font-size: 0.65rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; }
+
+.rep-note {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-left: 3px solid #3b82f6;
+  border-radius: 0 8px 8px 0;
+  font-size: 0.82rem;
+  color: #475569;
+}
+
+/* ══════════════════════════════════════════
+   PHYSIOTHERAPIST CARDS
+══════════════════════════════════════════ */
+.physio-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+.physio-item:last-child { margin-bottom: 0; }
+
+.physio-ava {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: #0f172a;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  flex-shrink: 0;
+}
+
+.physio-name { font-weight: 700; font-size: 0.9rem; color: #0f172a; }
+.physio-loc  { font-size: 0.75rem; color: #94a3b8; margin: 2px 0; }
+.physio-spec { font-size: 0.72rem; color: #3b82f6; font-weight: 600; }
+
+.btn-contact {
+  display: inline-block;
+  margin-top: 7px;
+  background: #0f172a;
+  color: white;
+  border: none;
+  padding: 5px 13px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: background 0.15s;
+}
+.btn-contact:hover { background: #1e293b; }
+
+/* ══════════════════════════════════════════
+   BACKEND STATS BAR
+══════════════════════════════════════════ */
+.backend-bar {
+  background: #0f172a;
+  color: white;
+  padding: 8px 20px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  flex-wrap: wrap;
+}
+
+.bstat { color: #94a3b8; }
+.bstat span { color: #4ade80; }
+.bstat.red  span { color: #f87171; }
+.bstat.yellow span { color: #facc15; }
+
+/* ══════════════════════════════════════════
+   TOAST
+══════════════════════════════════════════ */
+#toast {
+  position: fixed;
+  bottom: 20px; right: 20px;
+  background: #0f172a;
+  color: white;
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  transform: translateY(80px);
+  transition: transform 0.3s ease;
+  z-index: 999;
+  max-width: 280px;
+  font-family: 'Inter', sans-serif;
+}
+#toast.show { transform: translateY(0); }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════
+     HEADER
+══════════════════════════════════════════ -->
+<div class="header">
+  <div class="header-left">
+    <div class="header-logo">🧍</div>
+    <div>
+      <div class="header-title">AI Posture Correction System</div>
+      <div class="header-sub">MediaPipe Pose · Rule-Based Detection · Flask Backend</div>
+    </div>
+  </div>
+  <div class="live-pill">
+    <div class="live-dot" id="liveDot"></div>
+    <span id="liveLabel">Offline</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     BACKEND STATS BAR (updates from Flask API)
+══════════════════════════════════════════ -->
+<div class="backend-bar" id="backendBar">
+  <div class="bstat">🗄️ Backend: <span id="beStatus">Connecting...</span></div>
+  <div class="bstat">Total Logs: <span id="beTot">–</span></div>
+  <div class="bstat">✅ Correct: <span id="beGood">–</span></div>
+  <div class="bstat yellow">⚠️ Bad: <span id="beBad">–</span></div>
+  <div class="bstat red">❌ Worst: <span id="beWorst">–</span></div>
+  <div class="bstat">Score: <span id="beScore">–</span></div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     MAIN CONTENT
+══════════════════════════════════════════ -->
+<div class="main">
+
+  <!-- ── LEFT COLUMN ── -->
+  <div>
+
+    <!-- CAMERA CARD -->
+    <div class="card">
+      <div class="card-label">📷 Live Camera Feed — MediaPipe Pose Detection</div>
+
+      <div class="cam-wrap">
+        <video id="videoEl" playsinline></video>
+        <canvas id="canvasEl"></canvas>
+
+        <!-- Badges top-left -->
+        <div class="cam-badges">
+          <div class="cam-badge">
+            <div class="live-dot" id="camDot"></div>
+            <span id="camLabel">Camera Off</span>
+          </div>
+          <div class="cam-badge" id="fpsBadge">0 FPS</div>
+        </div>
+
+        <!-- Status badge top-right -->
+        <div class="cam-status-badge csb-idle" id="camStatusBadge">⏳ Idle</div>
+
+        <!-- Start overlay -->
+        <div id="startOverlay">
+          <div class="start-icon">📷</div>
+          <div class="start-title">AI Posture Detection</div>
+          <div class="start-sub">Uses MediaPipe Pose — No URL or training needed!</div>
+          <button class="btn-start" onclick="startCamera()">▶ Start Camera</button>
+          <div class="start-sub" style="color:#475569; font-size:0.72rem;">Allow camera access when browser asks</div>
+        </div>
+      </div>
+
+      <!-- STATUS BOX -->
+      <div class="status-box sb-idle" id="statusBox">
+        <div class="sb-icon" id="sbIcon">🔍</div>
+        <div>
+          <div class="sb-title" id="sbTitle">Waiting for camera...</div>
+          <div class="sb-desc"  id="sbDesc">Click Start Camera to begin posture detection</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ANGLE ANALYSIS -->
+    <div class="card">
+      <div class="card-label">📐 Body Angle Analysis (Real-Time)</div>
+      <div class="angle-grid">
+
+        <div class="angle-tile">
+          <span class="angle-val" id="aNeck">--°</span>
+          <div class="angle-name">Neck Angle</div>
+          <div class="angle-track"><div class="angle-fill aok" id="bNeck" style="width:0%"></div></div>
+        </div>
+
+        <div class="angle-tile">
+          <span class="angle-val" id="aSpine">--°</span>
+          <div class="angle-name">Spine Angle</div>
+          <div class="angle-track"><div class="angle-fill aok" id="bSpine" style="width:0%"></div></div>
+        </div>
+
+        <div class="angle-tile">
+          <span class="angle-val" id="aShoulder">--</span>
+          <div class="angle-name">Shoulder Level</div>
+          <div class="angle-track"><div class="angle-fill aok" id="bShoulder" style="width:0%"></div></div>
+        </div>
+
+        <div class="angle-tile">
+          <span class="angle-val" id="aHip">--</span>
+          <div class="angle-name">Hip Alignment</div>
+          <div class="angle-track"><div class="angle-fill aok" id="bHip" style="width:0%"></div></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- SUGGESTIONS -->
+    <div class="card">
+      <div class="card-label">💡 AI Guidance — Real-Time Suggestions</div>
+      <ul class="sug-list" id="sugList">
+        <li class="sug-item">
+          <span class="sug-icon">ℹ️</span>
+          Start the camera to receive AI-powered posture guidance
+        </li>
+      </ul>
+    </div>
+
+    <!-- REPORT CARD -->
+    <div class="card">
+      <div class="card-label">📋 Session Report Card</div>
+      <div class="grade-row">
+        <div class="grade-box" id="gradeBox">—</div>
+        <div class="rep-bars">
+          <div class="rep-row">
+            <span class="rep-lbl">✅ Correct</span>
+            <div class="rep-track"><div class="rep-fill fg" id="rGood" style="width:0%"></div></div>
+            <span class="rep-val" id="rGoodPct">0%</span>
+          </div>
+          <div class="rep-row">
+            <span class="rep-lbl">⚠️ Bad</span>
+            <div class="rep-track"><div class="rep-fill fy" id="rBad" style="width:0%"></div></div>
+            <span class="rep-val" id="rBadPct">0%</span>
+          </div>
+          <div class="rep-row">
+            <span class="rep-lbl">❌ Worst</span>
+            <div class="rep-track"><div class="rep-fill fr" id="rWorst" style="width:0%"></div></div>
+            <span class="rep-val" id="rWorstPct">0%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stat-strip">
+        <div class="stat-chip"><span class="sv" id="stTotal">0m</span><span class="sl">Total</span></div>
+        <div class="stat-chip"><span class="sv" id="stGood">0m</span><span class="sl">Correct</span></div>
+        <div class="stat-chip"><span class="sv" id="stBad">0m</span><span class="sl">Bad</span></div>
+        <div class="stat-chip"><span class="sv" id="stBest">0m</span><span class="sl">Best Streak</span></div>
+      </div>
+
+      <div class="rep-note" id="repNote">Start a session to generate your report card!</div>
+    </div>
+
+  </div>
+
+  <!-- ── RIGHT COLUMN ── -->
+  <div>
+
+    <!-- STREAK CARD -->
+    <div class="card">
+      <div class="card-label">🔥 Correct Posture Streak</div>
+      <div class="streak-num"  id="streakNum">0</div>
+      <div class="streak-unit">minutes</div>
+      <div class="streak-track">
+        <div class="streak-fill" id="streakFill" style="width:0%"></div>
+      </div>
+      <div class="streak-goal-label"><span>0 min</span><span>🎯 5 min goal</span></div>
+      <div class="badges">
+        <div class="badge" id="b2">⭐ 2 min</div>
+        <div class="badge" id="b5">🥉 5 min</div>
+        <div class="badge" id="b10">🥇 10 min</div>
+      </div>
+      <div class="rest-box" id="restBox">
+        🧘 Great job! Take a 2–3 min rest & stretch your back!
+      </div>
+    </div>
+
+    <!-- POMODORO BREAK TIMER -->
+    <div class="card">
+      <div class="card-label">⏰ Pomodoro Break Timer</div>
+      <div class="break-center">
+        <div class="break-lbl" id="breakLbl">Focus Time</div>
+        <div class="break-time" id="breakTime">25:00</div>
+        <div class="break-pill bp-work" id="breakPill">🎯 Work Session</div>
+      </div>
+    </div>
+
+    <!-- NEARBY PHYSIOTHERAPISTS -->
+    <div class="card">
+      <div class="card-label">🏥 Nearby Physiotherapists</div>
+
+      <div class="physio-item">
+        <div class="physio-ava">👨‍⚕️</div>
+        <div>
+          <div class="physio-name">Dr. Rajesh Sharma</div>
+          <div class="physio-loc">📍 Sector 15, Gandhinagar</div>
+          <div class="physio-spec">Spine & Posture Specialist</div>
+          <button class="btn-contact" onclick="showToast('📞 Contacting Dr. Rajesh Sharma...')">📞 Contact</button>
+        </div>
+      </div>
+
+      <div class="physio-item">
+        <div class="physio-ava">👩‍⚕️</div>
+        <div>
+          <div class="physio-name">Dr. Priya Mehta</div>
+          <div class="physio-loc">📍 CG Road, Ahmedabad</div>
+          <div class="physio-spec">Orthopedic Physiotherapist</div>
+          <button class="btn-contact" onclick="showToast('📞 Contacting Dr. Priya Mehta...')">📞 Contact</button>
+        </div>
+      </div>
+
+      <div class="physio-item">
+        <div class="physio-ava">👨‍⚕️</div>
+        <div>
+          <div class="physio-name">Dr. Amit Patel</div>
+          <div class="physio-loc">📍 Bopal, Ahmedabad</div>
+          <div class="physio-spec">Posture & Rehab Expert</div>
+          <button class="btn-contact" onclick="showToast('📞 Contacting Dr. Amit Patel...')">📞 Contact</button>
+        </div>
+      </div>
+
+      <div class="physio-item">
+        <div class="physio-ava">👩‍⚕️</div>
+        <div>
+          <div class="physio-name">Dr. Sneha Joshi</div>
+          <div class="physio-loc">📍 Maninagar, Ahmedabad</div>
+          <div class="physio-spec">Sports & Spinal Therapy</div>
+          <button class="btn-contact" onclick="showToast('📞 Contacting Dr. Sneha Joshi...')">📞 Contact</button>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- ══════════════════════════════════════════
+     JAVASCRIPT — ALL LOGIC HERE
+══════════════════════════════════════════ -->
+<script>
+
+// ════════════════════════════════════════════════════
+//  MEDIAPIPE POSE SETUP
+// ════════════════════════════════════════════════════
+const video  = document.getElementById('videoEl');
+const canvas = document.getElementById('canvasEl');
+const ctx    = canvas.getContext('2d');
+
+let poseModel, camera;
+let isRunning = false;
+
+// ════════════════════════════════════════════════════
+//  SESSION STATE
+// ════════════════════════════════════════════════════
+let currentPosture  = 'idle';
+let correctSec = 0, badSec = 0, worstSec = 0, totalSec = 0;
+let streakSec = 0, bestStreakSec = 0;
+let breakSec  = 25 * 60;
+let isBreak   = false;
+let lastTick  = null;
+
+// FPS tracking
+let frameCount = 0, fps = 0, lastFpsTime = Date.now();
+
+// Backend logging: only log every 5 seconds to avoid spam
+let logCooldown = 0;
+
+// ════════════════════════════════════════════════════
+//  1. START CAMERA & MEDIAPIPE
+// ════════════════════════════════════════════════════
+function startCamera() {
+  document.getElementById('startOverlay').style.display = 'none';
+
+  // Update UI
+  document.getElementById('liveDot').classList.add('active');
+  document.getElementById('liveLabel').textContent = 'Live';
+  document.getElementById('camDot').classList.add('active');
+  document.getElementById('camLabel').textContent = 'Camera ON';
+
+  // Initialize MediaPipe Pose
+  poseModel = new Pose({
+    locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+    }
+  });
+
+  // MediaPipe settings
+  poseModel.setOptions({
+    modelComplexity: 1,          // 0=fast, 1=balanced, 2=accurate
+    smoothLandmarks: true,       // smooth out jittery points
+    enableSegmentation: false,   // we don't need background removal
+    minDetectionConfidence: 0.5, // how confident before detecting
+    minTrackingConfidence: 0.5   // how confident before tracking
+  });
+
+  // This function runs every time MediaPipe processes a frame
+  poseModel.onResults(onPoseResults);
+
+  // Start webcam using MediaPipe Camera
+  camera = new Camera(video, {
+    onFrame: async () => {
+      await poseModel.send({ image: video });
+    },
+    width: 640,
+    height: 480
+  });
+
+  camera.start();
+  isRunning = true;
+  lastTick  = Date.now();
+
+  // Start timers
+  setInterval(tickEverySecond, 1000);
+  startBreakTimer();
+
+  showToast('✅ Camera started! MediaPipe is now detecting your posture.');
+}
+
+// ════════════════════════════════════════════════════
+//  2. PROCESS MEDIAPIPE RESULTS (runs ~30x per second)
+// ════════════════════════════════════════════════════
+function onPoseResults(results) {
+
+  // ── Count FPS ──
+  frameCount++;
+  const now = Date.now();
+  if (now - lastFpsTime >= 1000) {
+    fps = frameCount;
+    frameCount = 0;
+    lastFpsTime = now;
+    document.getElementById('fpsBadge').textContent = fps + ' FPS';
+  }
+
+  // ── Draw camera feed on canvas ──
+  canvas.width  = results.image.width;
+  canvas.height = results.image.height;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(results.image, 0, 0);
+
+  // ── If no person detected, show idle ──
+  if (!results.poseLandmarks) {
+    setPostureUI('idle');
+    return;
+  }
+
+  const lm = results.poseLandmarks;
+
+  // ── Draw skeleton on canvas ──
+  // This draws the green/colored lines connecting body points
+  drawConnectors(ctx, lm, POSE_CONNECTIONS, {
+    color: '#64748b',
+    lineWidth: 2
+  });
+  drawLandmarks(ctx, lm, {
+    color: '#3b82f6',
+    lineWidth: 1,
+    radius: 4
+  });
+
+  // ── STEP 3: Extract the body landmarks we need ──
+  // Each landmark has x, y values (0 to 1, relative to image size)
+  const nose      = lm[0];
+  const leftSh    = lm[11];  const rightSh  = lm[12];
+  const leftHip   = lm[23];  const rightHip = lm[24];
+  const leftAnkle = lm[27];  const rightAnkle = lm[28];
+
+  // ── STEP 4: Calculate posture angles ──
+  const neckAngle    = calcNeckAngle(nose, leftSh, rightSh);
+  const spineAngle   = calcSpineAngle(leftSh, rightSh, leftHip, rightHip);
+  const shoulderDiff = calcDiff(leftSh.y, rightSh.y);
+  const hipDiff      = calcDiff(leftHip.y, rightHip.y);
+
+  // ── STEP 5: Classify posture ──
+  const posture = classifyPosture(neckAngle, spineAngle, shoulderDiff, hipDiff);
+
+  // ── STEP 6: Update all UI elements ──
+  updateAngleUI(neckAngle, spineAngle, shoulderDiff, hipDiff);
+  updateSuggestions(neckAngle, spineAngle, shoulderDiff, hipDiff, posture);
+  setPostureUI(posture);
+  drawCanvasLabel(posture);
+
+  // ── STEP 7: Update state ──
+  currentPosture = posture;
+
+  // ── STEP 8: Log to Flask backend every 5 seconds ──
+  if (logCooldown <= 0) {
+    sendToBackend(posture, neckAngle, spineAngle, shoulderDiff, hipDiff);
+    logCooldown = 5;
+  }
+}
+
+// ════════════════════════════════════════════════════
+//  3. ANGLE CALCULATION FUNCTIONS
+// ════════════════════════════════════════════════════
+
+// Calculate angle at point B between lines A-B and C-B
+function calcAngle(A, B, C) {
+  const BAx = A.x - B.x,  BAy = A.y - B.y;
+  const BCx = C.x - B.x,  BCy = C.y - B.y;
+  const dot  = BAx*BCx + BAy*BCy;
+  const magA = Math.sqrt(BAx**2 + BAy**2);
+  const magC = Math.sqrt(BCx**2 + BCy**2);
+  if (magA * magC === 0) return 0;
+  const cosVal = Math.min(Math.max(dot / (magA * magC), -1), 1);
+  return Math.round(Math.acos(cosVal) * 180 / Math.PI);
+}
+
+// Neck angle: angle between nose, shoulder midpoint, and vertical
+function calcNeckAngle(nose, leftSh, rightSh) {
+  const midSh = {
+    x: (leftSh.x + rightSh.x) / 2,
+    y: (leftSh.y + rightSh.y) / 2
+  };
+  // Vertical point directly above midSh
+  const vertical = { x: midSh.x, y: midSh.y - 0.1 };
+  return calcAngle(nose, midSh, vertical);
+}
+
+// Spine angle: angle between shoulder midpoint, hip midpoint, and vertical
+function calcSpineAngle(leftSh, rightSh, leftHip, rightHip) {
+  const midSh  = { x: (leftSh.x + rightSh.x)/2,  y: (leftSh.y + rightSh.y)/2 };
+  const midHip = { x: (leftHip.x + rightHip.x)/2, y: (leftHip.y + rightHip.y)/2 };
+  const vertical = { x: midHip.x, y: midHip.y - 0.1 };
+  return calcAngle(midSh, midHip, vertical);
+}
+
+// Simple difference for shoulder/hip level (in % units)
+function calcDiff(a, b) {
+  return Math.round(Math.abs(a - b) * 100);
+}
+
+// ════════════════════════════════════════════════════
+//  4. POSTURE CLASSIFICATION — RULE-BASED LOGIC
+// ════════════════════════════════════════════════════
+/*
+  THRESHOLDS (tuned for sitting posture):
+  ──────────────────────────────────────────
+  Neck angle:
+    < 20°  → OK
+    20–35° → Bad
+    > 35°  → Worst
+
+  Spine angle:
+    < 15°  → OK
+    15–30° → Bad
+    > 30°  → Worst
+
+  Shoulder level difference:
+    < 5    → OK
+    5–10   → Bad
+    > 10   → Worst
+
+  Hip alignment difference:
+    < 5    → OK
+    5–10   → Bad
+    > 10   → Worst
+
+  DECISION RULE:
+  - If 2+ angles are in "Worst" range → Worst Posture ❌
+  - If 1+ angles are in "Bad" range   → Bad Posture ⚠️
+  - Otherwise                         → Correct Posture ✅
+*/
+function classifyPosture(neck, spine, shoulder, hip) {
+  const worstFlags = [
+    neck     > 35,
+    spine    > 30,
+    shoulder > 10,
+    hip      > 10
+  ].filter(Boolean).length;
+
+  const badFlags = [
+    neck     > 20,
+    spine    > 15,
+    shoulder > 5,
+    hip      > 5
+  ].filter(Boolean).length;
+
+  if (worstFlags >= 2) return 'worst';
+  if (badFlags   >= 2) return 'bad';
+  if (badFlags   >= 1) return 'bad';
+  return 'correct';
+}
+
+// ════════════════════════════════════════════════════
+//  5. UI UPDATE FUNCTIONS
+// ════════════════════════════════════════════════════
+
+// Update the 4 angle tiles
+function updateAngleUI(neck, spine, shoulder, hip) {
+  setAngleTile('aNeck',     'bNeck',     neck,    20, 35, '°');
+  setAngleTile('aSpine',    'bSpine',    spine,   15, 30, '°');
+  setAngleTile('aShoulder', 'bShoulder', shoulder, 5, 10, '');
+  setAngleTile('aHip',      'bHip',      hip,      5, 10, '');
+}
+
+function setAngleTile(valId, barId, val, warnMax, badMax, unit) {
+  document.getElementById(valId).textContent = val + unit;
+  const pct = Math.min((val / badMax) * 100, 100);
+  const bar = document.getElementById(barId);
+  bar.style.width = pct + '%';
+  bar.className = 'angle-fill ' +
+    (val <= warnMax ? 'aok' : val <= badMax ? 'awarn' : 'abad');
+}
+
+// Update the main status box
+const STATUS_CFG = {
+  correct: { cls:'sb-correct', icon:'✅', title:'Correct Posture',  desc:'Your spine and body alignment look great! Keep it up!' },
+  bad:     { cls:'sb-bad',     icon:'⚠️', title:'Bad Posture',      desc:'Minor alignment issues detected. Please adjust.' },
+  worst:   { cls:'sb-worst',   icon:'❌', title:'Worst Posture',    desc:'Serious posture problems! Fix your position immediately.' },
+  idle:    { cls:'sb-idle',    icon:'🔍', title:'Detecting...',     desc:'Sit or stand in front of the camera.' }
+};
+
+function setPostureUI(type) {
+  const cfg = STATUS_CFG[type] || STATUS_CFG.idle;
+  const box = document.getElementById('statusBox');
+  box.className = 'status-box ' + cfg.cls;
+  document.getElementById('sbIcon').textContent  = cfg.icon;
+  document.getElementById('sbTitle').textContent = cfg.title;
+  document.getElementById('sbDesc').textContent  = cfg.desc;
+
+  // Update camera badge (top right of camera)
+  const camBadge = document.getElementById('camStatusBadge');
+  const badgeMap = {
+    correct:'✓ CORRECT · csb-correct',
+    bad:    '⚠ BAD · csb-bad',
+    worst:  '✗ WORST · csb-worst',
+    idle:   '⏳ Idle · csb-idle'
+  };
+  const [text, cls] = (badgeMap[type] || badgeMap.idle).split(' · ');
+  camBadge.textContent = text;
+  camBadge.className   = 'cam-status-badge ' + cls;
+}
+
+// Update suggestions list based on what's wrong
+function updateSuggestions(neck, spine, shoulder, hip, posture) {
+  const items = [];
+
+  if (posture === 'correct') {
+    items.push(['✅', 'Perfect posture! Your body is well aligned.']);
+    items.push(['💪', 'Keep this position — your spine is healthy!']);
+    items.push(['🌟', 'Great work! Maintaining this posture builds healthy habits.']);
+  } else {
+    if (neck > 35)
+      items.push(['🚨', `Critical: Neck angle is ${neck}° — lift your head immediately!`]);
+    else if (neck > 20)
+      items.push(['⬆️', `Lift your head — neck angle is ${neck}° (target: below 20°)`]);
+
+    if (spine > 30)
+      items.push(['🚨', `Critical: Back is severely slouched — ${spine}° spine angle!`]);
+    else if (spine > 15)
+      items.push(['🪑', `Straighten your back — spine angle is ${spine}° (target: below 15°)`]);
+
+    if (shoulder > 10)
+      items.push(['🚨', `Shoulders very uneven — difference of ${shoulder} units!`]);
+    else if (shoulder > 5)
+      items.push(['↔️', `Level your shoulders — imbalance of ${shoulder} units detected`]);
+
+    if (hip > 10)
+      items.push(['🚨', `Hips badly misaligned — difference of ${hip} units!`]);
+    else if (hip > 5)
+      items.push(['⚖️', `Align your hips — imbalance of ${hip} units detected`]);
+
+    if (posture === 'worst')
+      items.push(['🩺', 'Tip: Press your lower back flat against your chair now']);
+
+    if (items.length === 0)
+      items.push(['ℹ️', 'Minor posture deviation — small adjustments needed']);
+  }
+
+  document.getElementById('sugList').innerHTML = items.map(
+    ([icon, text]) => `<li class="sug-item"><span class="sug-icon">${icon}</span>${text}</li>`
+  ).join('');
+}
+
+// Draw coloured label on camera canvas
+function drawCanvasLabel(type) {
+  const colors = { correct:'rgba(34,197,94,0.85)', bad:'rgba(234,179,8,0.85)', worst:'rgba(239,68,68,0.85)', idle:'rgba(71,85,105,0.7)' };
+  ctx.save();
+  ctx.fillStyle = colors[type] || colors.idle;
+  ctx.beginPath();
+  const w = canvas.width, h = canvas.height;
+  ctx.roundRect(w - 130, h - 44, 120, 32, 8);
+  ctx.fill();
+  ctx.fillStyle = 'white';
+  ctx.font = 'bold 13px Inter, Segoe UI, sans-serif';
+  ctx.textAlign = 'center';
+  const labels = { correct:'✓ CORRECT', bad:'⚠ BAD POSTURE', worst:'✗ WORST', idle:'DETECTING' };
+  ctx.fillText(labels[type] || '', w - 70, h - 23);
+  ctx.restore();
+}
+
+// ════════════════════════════════════════════════════
+//  6. SECOND TICKER — streak, report card, timers
+// ════════════════════════════════════════════════════
+function tickEverySecond() {
+  if (!isRunning) return;
+  totalSec++;
+  if (logCooldown > 0) logCooldown--;
+
+  if (currentPosture === 'correct') {
+    correctSec++;
+    streakSec++;
+    if (streakSec > bestStreakSec) bestStreakSec = streakSec;
+
+    // Badge milestones
+    if (streakSec === 120)  { document.getElementById('b2').classList.add('earned');  showToast('⭐ 2-minute streak earned!'); }
+    if (streakSec === 300)  { document.getElementById('b5').classList.add('earned');  showToast('🥉 5-minute streak! Take a rest!'); showRestBox(); }
+    if (streakSec === 600)  { document.getElementById('b10').classList.add('earned'); showToast('🥇 10-minute champion!'); }
+
+  } else if (currentPosture === 'bad') {
+    badSec++;
+    streakSec = 0;
+    hideRestBox();
+  } else if (currentPosture === 'worst') {
+    worstSec++;
+    streakSec = 0;
+    hideRestBox();
+  }
+
+  updateStreakUI();
+  updateReportCard();
+}
+
+function updateStreakUI() {
+  const mins = Math.floor(streakSec / 60);
+  document.getElementById('streakNum').textContent = mins;
+  const pct = Math.min((streakSec / 300) * 100, 100); // 5 min = 300s goal
+  document.getElementById('streakFill').style.width = pct + '%';
+}
+
+function showRestBox() { document.getElementById('restBox').style.display = 'block'; }
+function hideRestBox() { document.getElementById('restBox').style.display = 'none'; }
+
+function updateReportCard() {
+  const total = correctSec + badSec + worstSec;
+  if (!total) return;
+
+  const gp = Math.round((correctSec / total) * 100);
+  const bp = Math.round((badSec     / total) * 100);
+  const wp = Math.round((worstSec   / total) * 100);
+
+  document.getElementById('rGood').style.width  = gp + '%';
+  document.getElementById('rBad').style.width   = bp + '%';
+  document.getElementById('rWorst').style.width = wp + '%';
+  document.getElementById('rGoodPct').textContent  = gp + '%';
+  document.getElementById('rBadPct').textContent   = bp + '%';
+  document.getElementById('rWorstPct').textContent = wp + '%';
+
+  const grade = gp >= 90 ? 'A+' : gp >= 75 ? 'A' : gp >= 60 ? 'B' : gp >= 45 ? 'C' : 'D';
+  document.getElementById('gradeBox').textContent = grade;
+
+  const fmt = s => s < 60 ? s + 's' : Math.floor(s/60) + 'm';
+  document.getElementById('stTotal').textContent = fmt(totalSec);
+  document.getElementById('stGood').textContent  = fmt(correctSec);
+  document.getElementById('stBad').textContent   = fmt(badSec + worstSec);
+  document.getElementById('stBest').textContent  = fmt(bestStreakSec);
+
+  const gradeMsg = {
+    'A+': '🏆 Outstanding! You have excellent posture habits!',
+    'A':  '🌟 Excellent! Almost perfect posture today.',
+    'B':  '👍 Good job! Small improvements will go a long way.',
+    'C':  '🔔 Needs attention — try to sit more consciously.',
+    'D':  '⚠️ Posture needs significant improvement. Keep trying!'
+  };
+  document.getElementById('repNote').textContent = gradeMsg[grade] || '';
+}
+
+// ════════════════════════════════════════════════════
+//  7. BREAK TIMER (Pomodoro: 25min work, 3min rest)
+// ════════════════════════════════════════════════════
+function startBreakTimer() {
+  setInterval(() => {
+    if (!isRunning) return;
+    breakSec--;
+
+    if (breakSec <= 0) {
+      isBreak = !isBreak;
+      breakSec = isBreak ? 3 * 60 : 25 * 60;
+
+      document.getElementById('breakLbl').textContent  = isBreak ? 'Break Time'  : 'Focus Time';
+      document.getElementById('breakPill').className   = 'break-pill ' + (isBreak ? 'bp-rest' : 'bp-work');
+      document.getElementById('breakPill').textContent = isBreak ? '🧘 Rest & Stretch!' : '🎯 Work Session';
+      document.getElementById('breakTime').style.color = isBreak ? '#16a34a' : '#3b82f6';
+      showToast(isBreak ? '🧘 Rest time! Stretch for 3 minutes.' : '🎯 Break over — focus time!');
+    }
+
+    const m = String(Math.floor(breakSec / 60)).padStart(2, '0');
+    const s = String(breakSec % 60).padStart(2, '0');
+    document.getElementById('breakTime').textContent = m + ':' + s;
+  }, 1000);
+}
+
+// ════════════════════════════════════════════════════
+//  8. BACKEND API CALLS (sends data to Flask server)
+// ════════════════════════════════════════════════════
+
+// Send posture data to Flask backend (/api/log-posture)
+async function sendToBackend(posture, neck, spine, shoulder, hip) {
+  try {
+    await fetch('/api/log-posture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        posture:        posture,
+        neck_angle:     neck,
+        spine_angle:    spine,
+        shoulder_diff:  shoulder,
+        hip_diff:       hip,
+        streak_seconds: streakSec
+      })
+    });
+  } catch(e) {
+    // Backend might not be running — that's OK for demo
+  }
+}
+
+// Fetch summary from Flask backend and update the stats bar
+async function fetchBackendSummary() {
+  try {
+    const res  = await fetch('/api/summary');
+    const data = await res.json();
+
+    if (data.status === 'success') {
+      const s = data.summary;
+      document.getElementById('beStatus').textContent = '✅ Connected';
+      document.getElementById('beTot').textContent    = s.total_sessions;
+      document.getElementById('beGood').textContent   = s.correct_count;
+      document.getElementById('beBad').textContent    = s.bad_count;
+      document.getElementById('beWorst').textContent  = s.worst_count;
+      document.getElementById('beScore').textContent  = s.correct_percent + '%';
+    }
+  } catch(e) {
+    document.getElementById('beStatus').textContent = '🔴 Offline';
+  }
+}
+
+// Check backend every 10 seconds
+fetchBackendSummary();
+setInterval(fetchBackendSummary, 10000);
+
+// ════════════════════════════════════════════════════
+//  9. TOAST NOTIFICATION
+// ════════════════════════════════════════════════════
+let toastTimer;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+</script>
+
+</body>
+</html>
